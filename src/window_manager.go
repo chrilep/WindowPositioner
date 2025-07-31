@@ -213,39 +213,6 @@ func (wm *WindowManager) saveWindowPosition(window WindowInfo) {
 	wm.setupMainWindowContent() // Refresh the UI
 }
 
-// applyPosition applies a saved position to a window identified by its class name and title
-// It retrieves the position from the PositionStorage and moves the window to that position.
-func (wm *WindowManager) applyPosition(identifier string) {
-	log(true, "Applying position for:", identifier)
-	windows, err := EnumerateWindows()
-	if err != nil {
-		log(true, "Failed to enumerate windows:", err)
-		return
-	}
-
-	for _, window := range windows {
-		windowId := fmt.Sprintf("%s|%s|%s|%x|%x", window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
-		if windowId == identifier {
-			pos, err := wm.storage.LoadPosition(identifier)
-			if err != nil {
-				log(true, "Failed to load position:", err)
-				return
-			}
-
-			err = MoveWindowAccurate(window.Handle, pos.X, pos.Y, pos.Width, pos.Height)
-			if err != nil {
-				log(true, "Failed to move window:", err)
-				return
-			}
-
-			log(true, "Applied position to:", identifier)
-			return
-		}
-	}
-
-	log(true, "Window not found:", identifier)
-}
-
 // repositionSavedWindows repositions all saved windows based on their stored positions
 // This is called on startup and periodically by the monitoring service.
 func (wm *WindowManager) repositionSavedWindows() {
