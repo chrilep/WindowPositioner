@@ -7,6 +7,8 @@ WindowPositioner lets you save and restore window positions automatically, optim
 
 WindowPositioner helps you save window layouts according to your preferences and restore them whenever needed. Perfect for multi-monitor setups or frequently used applications you want always positioned just right.
 
+![WindowPositioner App Screenshot](https://raw.githubusercontent.com/chrilep/WindowPositioner/refs/heads/main/res/gui.png)
+
 - Save positions of arbitrary windows.  
 - Positions are stored in a JSON file inside your roaming AppData folder, ideal for user profiles.  
 - Automatic logging of actions and errors for easy debugging.  
