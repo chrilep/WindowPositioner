@@ -1,5 +1,9 @@
 package main
 
+/*
+	compile: fyne package --release --os windows --executable "WindowPositioner.exe"
+*/
+
 import (
 	"context"
 	"time"
@@ -12,7 +16,7 @@ var (
 	// Global variables for publisher, product, and version names
 	strPublisherName = "Lancer"
 	strProductName   = "WindowPositioner"
-	strVersion       = "1.0.0"
+	strVersion       = "1.1.0"
 	strAppId         = "com.lancer.windowpositioner"
 	// cd src
 	// fyne package -os windows

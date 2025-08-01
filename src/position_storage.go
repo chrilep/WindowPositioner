@@ -18,6 +18,8 @@ type PositionStorage struct {
 	mu          sync.Mutex
 }
 
+// NewPositionStorage initializes a new PositionStorage instance.
+// It creates the necessary directory for storing positions and initializes the storage file.
 func NewPositionStorage() *PositionStorage {
 	debug := true
 	appData := os.Getenv("APPDATA")
@@ -37,6 +39,10 @@ func NewPositionStorage() *PositionStorage {
 	}
 }
 
+// SavePosition saves the position of a window identified by its identifier.
+// The identifier is a unique string that combines the window's title, class name, executable,
+// style, and extended style.
+// It serializes the position to a JSON file.
 func (ps *PositionStorage) SavePosition(identifier string, pos WindowPosition) error {
 	positions, err := ps.loadAll()
 	if err != nil {
@@ -46,6 +52,8 @@ func (ps *PositionStorage) SavePosition(identifier string, pos WindowPosition) e
 	return ps.saveAll(positions)
 }
 
+// LoadPosition retrieves the position of a window by its identifier.
+// It deserializes the position from the JSON file.
 func (ps *PositionStorage) LoadPosition(identifier string) (*WindowPosition, error) {
 	positions, err := ps.loadAll()
 	if err != nil {
@@ -58,6 +66,8 @@ func (ps *PositionStorage) LoadPosition(identifier string) (*WindowPosition, err
 	return &pos, nil
 }
 
+// DeletePosition removes a window's position from storage by its identifier.
+// It updates the JSON file to reflect the deletion.
 func (ps *PositionStorage) DeletePosition(identifier string) error {
 	positions, err := ps.loadAll()
 	if err != nil {
@@ -67,6 +77,8 @@ func (ps *PositionStorage) DeletePosition(identifier string) error {
 	return ps.saveAll(positions)
 }
 
+// GetAllPositions retrieves all saved window positions.
+// It returns a map where the keys are identifiers and the values are WindowPosition structs.
 func (ps *PositionStorage) GetAllPositions() map[string]WindowPosition {
 	positions, err := ps.loadAll()
 	if err != nil {
@@ -75,6 +87,8 @@ func (ps *PositionStorage) GetAllPositions() map[string]WindowPosition {
 	return positions
 }
 
+// loadAll reads all positions from the JSON file and returns them as a map.
+// If the file does not exist, it returns an empty map.
 func (ps *PositionStorage) loadAll() (map[string]WindowPosition, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -95,6 +109,8 @@ func (ps *PositionStorage) loadAll() (map[string]WindowPosition, error) {
 	return positions, nil
 }
 
+// saveAll writes all positions to the JSON file.
+// It serializes the map of positions to JSON and saves it to the storage file.
 func (ps *PositionStorage) saveAll(positions map[string]WindowPosition) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()

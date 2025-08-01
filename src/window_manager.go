@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -37,7 +40,7 @@ func NewWindowManager(app fyne.App) *WindowManager {
 // It includes a close intercept to hide the window instead of closing it.
 func (wm *WindowManager) createMainWindow() {
 	wm.mainWindow = wm.app.NewWindow(strPublisherName + `'s ` + strProductName + ` ` + strVersion)
-	wm.mainWindow.Resize(fyne.NewSize(600, 100))
+	//wm.mainWindow.Resize(fyne.NewSize(600, 100))
 
 	// Hide window instead of closing to keep in system tray
 	wm.mainWindow.SetCloseIntercept(func() {
@@ -50,13 +53,21 @@ func (wm *WindowManager) createMainWindow() {
 func (wm *WindowManager) setupMainWindowContent() {
 	log(true, "Setting up main window content.")
 
+	// Separators
+	separator := widget.NewSeparator()
+
 	// Title label
 	labTitle := widget.NewLabel("Visible Windows")
 	labTitle.TextStyle = fyne.TextStyle{Bold: true}
 
 	// Refresh button
-	refreshBtn := widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
+	refreshBtn := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() {
 		wm.refreshWindowList()
+	})
+
+	// Exit button
+	exitBtn := widget.NewButtonWithIcon("Exit", theme.LogoutIcon(), func() {
+		wm.app.Quit()
 	})
 
 	// Window list
@@ -68,6 +79,7 @@ func (wm *WindowManager) setupMainWindowContent() {
 		func() fyne.CanvasObject {
 			return container.NewHBox(
 				widget.NewButtonWithIcon("", theme.DocumentSaveIcon(), nil),
+				widget.NewButtonWithIcon("", theme.InfoIcon(), nil), // Info-Button
 				widget.NewLabel("Window Title"),
 			)
 		},
@@ -78,11 +90,48 @@ func (wm *WindowManager) setupMainWindowContent() {
 
 			window := wm.windows[id]
 			hbox := obj.(*fyne.Container)
-			button := hbox.Objects[0].(*widget.Button)
-			label := hbox.Objects[1].(*widget.Label)
+			saveBtn := hbox.Objects[0].(*widget.Button)
+			infoBtn := hbox.Objects[1].(*widget.Button)
+			label := hbox.Objects[2].(*widget.Label)
 
-			button.OnTapped = func() {
+			saveBtn.OnTapped = func() {
 				wm.saveWindowPosition(window)
+			}
+			infoBtn.OnTapped = func() {
+				x := int(window.WindowRect.Left)
+				y := int(window.WindowRect.Top)
+				width := int(window.WindowRect.Right - window.WindowRect.Left)
+				height := int(window.WindowRect.Bottom - window.WindowRect.Top)
+
+				infoText := fmt.Sprintf(
+					"Window    :\n'%s'\n\n"+
+						"Position  : %d,%d\n"+
+						"Size      : %dx%d\n"+
+						"Process ID: %d\n"+
+						"Class Name: %s\n"+
+						"HWND      : 0x%08X\n"+
+						"Style     : 0x%08X\n"+
+						"ExStyle   : 0x%08X\n"+
+						"Executable:\n'%s'",
+					window.Title,
+					x, y, width, height,
+					window.ProcessID,
+					window.ClassName,
+					window.Handle,
+					window.Style,
+					window.ExStyle,
+					window.Executable,
+				)
+
+				entry := widget.NewMultiLineEntry()
+				entry.SetText(infoText)
+				entry.TextStyle = fyne.TextStyle{Monospace: true}
+				entry.Wrapping = fyne.TextWrapBreak
+
+				scroll := container.NewScroll(entry)
+				scroll.SetMinSize(fyne.NewSize(400, 300))
+
+				dialog.ShowCustom("Details for this window", "Close", scroll, wm.mainWindow)
 			}
 			label.SetText(fmt.Sprintf("%s [%s]", window.Title, window.ClassName))
 		},
@@ -93,6 +142,16 @@ func (wm *WindowManager) setupMainWindowContent() {
 	// Saved positions section
 	savedLabel := widget.NewLabel("Saved Positions")
 	savedLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+	configBtn := widget.NewButtonWithIcon("Edit", theme.FileTextIcon(), func() {
+		// Open the configuration file ps.storageFile in the default text editor
+		cmd := exec.Command("cmd", "/C", "start", "", wm.storage.storageFile)
+		err := cmd.Run()
+		if err != nil {
+			log(true, "Failed to open config file:", err)
+			dialog.ShowError(err, wm.mainWindow)
+		}
+	})
 
 	// Create a list for saved positions
 	savedList := wm.createSavedPositionsList()
@@ -119,14 +178,17 @@ func (wm *WindowManager) setupMainWindowContent() {
 
 	// Layout
 	content := container.NewVBox(
-		container.NewHBox(labTitle, widget.NewSeparator(), refreshBtn),
-		widget.NewSeparator(),
+		container.New(layout.NewGridLayout(4), labTitle, separator, refreshBtn, exitBtn),
+		separator,
+		//container.NewHBox(labTitle, separator, refreshBtn, separator, exitBtn),
+		separator,
 		scrollWindowList,
 		widget.NewSeparator(),
-		savedLabel,
-		widget.NewSeparator(),
+		container.New(layout.NewGridLayout(4), savedLabel, separator, separator, configBtn),
+		//container.NewHBox(savedLabel, separator, configBtn),
+		separator,
 		scrollSavedList,
-		widget.NewSeparator(),
+		separator,
 		labSettings,
 		startupCheck,
 	)
@@ -202,7 +264,7 @@ func (wm *WindowManager) saveWindowPosition(window WindowInfo) {
 		return
 	}
 
-	identifier := fmt.Sprintf("%s|%s|%s|%x|%x", window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
+	identifier := fmt.Sprintf("%s|%s|%s|0x%08X|0x%08X", window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
 	err = wm.storage.SavePosition(identifier, *pos)
 	if err != nil {
 		log(true, "Failed to save position:", err)
@@ -225,7 +287,7 @@ func (wm *WindowManager) repositionSavedWindows() {
 	}
 
 	for _, window := range windows {
-		identifier := fmt.Sprintf("%s|%s|%s|%x|%x", window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
+		identifier := fmt.Sprintf("%s|%s|%s|0x%08X|0x%08X", window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
 		if pos, exists := positions[identifier]; exists {
 			err := MoveWindowAccurate(window.Handle, pos.X, pos.Y, pos.Width, pos.Height)
 			if err != nil {
@@ -256,11 +318,12 @@ func (wm *WindowManager) startMonitoringService(ctx context.Context) {
 
 // setupSystemTray sets up the system tray menu for the application
 func (wm *WindowManager) setupSystemTray(desk desktop.App) {
-	log(true, "Setting up system tray menu.")
+	log(true, "Setting up system tray menu for", strProductName+`.`)
 	menu := fyne.NewMenu(strProductName,
 		fyne.NewMenuItem("Show Manager", func() {
 			wm.mainWindow.Show()
 			wm.mainWindow.RequestFocus()
+			wm.mainWindow.CenterOnScreen()
 		}),
 		//fyne.NewMenuItemSeparator(),
 		//fyne.NewMenuItem("Auto-position Now", func() {

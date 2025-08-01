@@ -8,20 +8,19 @@ import (
 )
 
 /*
-=== Lancer's logging module ===
-This module provides a simple logging mechanism that writes debug messages to both the console and a log file.
-The log file is created in the user's application data directory, and it is purged at the start of the application.
-It is designed to be used for debugging purposes, allowing developers to track the flow of the application.
+=== Lancer's simple logging module ===
+	This module provides a simple logging mechanism that writes debug messages to both the console and a log file.
+	The log file is created in the user's application data directory, and it is purged at the start of the application.
+	It is designed to be used for debugging purposes, allowing developers to track the flow of the application.
 
-It needs three global variables to work:
-- strPublisherName: The name of the publisher, e.g. "Lancer"
-- strProductName: The name of the product, e.g. "WindowPositioner"
-- strVersion: The version of the product, e.g. "1.2.3.4"
+	It needs three global variables to work:
+	- strPublisherName: The name of the publisher, e.g. "Lancer"
+	- strProductName: The name of the product, e.g. "WindowPositioner"
+	- strVersion: The version of the product, e.g. "1.2.3.4"
 
-Usage:
+	Usage:
 
-log(true, "Some var", "is", var)
-
+	log(true, "Some var", "is", var)
 */
 
 var strLogFilePath string // eg. <dataFolder>\Dataport\<Product>\log.txt
