@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -18,11 +19,30 @@ import (
 // WindowManager manages the main application window and the list of windows
 // It provides functionality to enumerate, save, and apply window positions.
 type WindowManager struct {
-	app        fyne.App
-	mainWindow fyne.Window
-	storage    *PositionStorage
-	windowList *widget.List
-	windows    []WindowInfo
+	app          fyne.App
+	mainWindow   fyne.Window
+	storage      *PositionStorage
+	windowList   *widget.List
+	windows      []WindowInfo
+	windowsMutex sync.RWMutex // Mutex to protect access to the windows slice
+}
+
+// thrtead-safe set of windows
+// This method replaces the current list of windows with a new one.
+func (wm *WindowManager) setWindows(ws []WindowInfo) {
+	wm.windowsMutex.Lock()
+	defer wm.windowsMutex.Unlock()
+	wm.windows = make([]WindowInfo, len(ws))
+	copy(wm.windows, ws)
+}
+
+// thread-safe get method for the current list of windows
+func (wm *WindowManager) getWindows() []WindowInfo {
+	wm.windowsMutex.RLock()
+	defer wm.windowsMutex.RUnlock()
+	copyWin := make([]WindowInfo, len(wm.windows))
+	copy(copyWin, wm.windows)
+	return copyWin
 }
 
 // NewWindowManager initializes the WindowManager with the given application
@@ -61,20 +81,20 @@ func (wm *WindowManager) setupMainWindowContent() {
 	labTitle.TextStyle = fyne.TextStyle{Bold: true}
 
 	// Refresh button
-	refreshBtn := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() {
+	refreshBtn := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), safeCallback(func() {
 		wm.refreshWindowList()
-	})
+	}))
 
 	// Exit button
-	exitBtn := widget.NewButtonWithIcon("Exit", theme.LogoutIcon(), func() {
+	exitBtn := widget.NewButtonWithIcon("Exit", theme.LogoutIcon(), safeCallback(func() {
 		wm.app.Quit()
-	})
+	}))
 
 	// Window list
 	const listItemHeight = 40 // Vertical pixel per scroll item (approx)
 	wm.windowList = widget.NewList(
 		func() int {
-			return len(wm.windows)
+			return len(wm.getWindows())
 		},
 		func() fyne.CanvasObject {
 			return container.NewHBox(
@@ -87,17 +107,21 @@ func (wm *WindowManager) setupMainWindowContent() {
 			if id >= len(wm.windows) {
 				return
 			}
-
-			window := wm.windows[id]
+			windows := wm.getWindows()
+			if id >= len(windows) {
+				return
+			}
+			window := windows[id]
 			hbox := obj.(*fyne.Container)
 			saveBtn := hbox.Objects[0].(*widget.Button)
 			infoBtn := hbox.Objects[1].(*widget.Button)
 			label := hbox.Objects[2].(*widget.Label)
 
-			saveBtn.OnTapped = func() {
+			saveBtn.OnTapped = safeCallback(func() {
 				wm.saveWindowPosition(window)
-			}
-			infoBtn.OnTapped = func() {
+			})
+
+			infoBtn.OnTapped = safeCallback(func() {
 				x := int(window.WindowRect.Left)
 				y := int(window.WindowRect.Top)
 				width := int(window.WindowRect.Right - window.WindowRect.Left)
@@ -132,7 +156,7 @@ func (wm *WindowManager) setupMainWindowContent() {
 				scroll.SetMinSize(fyne.NewSize(400, 300))
 
 				dialog.ShowCustom("Details for this window", "Close", scroll, wm.mainWindow)
-			}
+			})
 			label.SetText(fmt.Sprintf("%s [%s]", window.Title, window.ClassName))
 		},
 	)
@@ -143,7 +167,7 @@ func (wm *WindowManager) setupMainWindowContent() {
 	savedLabel := widget.NewLabel("Saved Positions")
 	savedLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	configBtn := widget.NewButtonWithIcon("Edit", theme.FileTextIcon(), func() {
+	configBtn := widget.NewButtonWithIcon("Edit", theme.FileTextIcon(), safeCallback(func() {
 		// Open the configuration file ps.storageFile in the default text editor
 		cmd := exec.Command("cmd", "/C", "start", "", wm.storage.storageFile)
 		err := cmd.Run()
@@ -151,7 +175,7 @@ func (wm *WindowManager) setupMainWindowContent() {
 			log(true, "Failed to open config file:", err)
 			dialog.ShowError(err, wm.mainWindow)
 		}
-	})
+	}))
 
 	// Create a list for saved positions
 	savedList := wm.createSavedPositionsList()
@@ -227,10 +251,10 @@ func (wm *WindowManager) createSavedPositionsList() *widget.List {
 			label := hbox.Objects[1].(*widget.Label)
 
 			label.SetText(key)
-			deleteBtn.OnTapped = func() {
+			deleteBtn.OnTapped = safeCallback(func() {
 				wm.storage.DeletePosition(key)
 				wm.setupMainWindowContent() // Refresh the UI
-			}
+			})
 		},
 	)
 }
@@ -251,7 +275,7 @@ func (wm *WindowManager) refreshWindowList() {
 		}
 	}
 
-	wm.windows = filteredWindows
+	wm.setWindows(filteredWindows)
 	wm.windowList.Refresh()
 }
 
@@ -302,6 +326,7 @@ func (wm *WindowManager) repositionSavedWindows() {
 // startMonitoringService runs a background service that periodically checks for window positions
 // and repositions them if necessary. This is useful for keeping windows in their saved positions.
 func (wm *WindowManager) startMonitoringService(ctx context.Context) {
+	defer panicHandler()
 	log(true, "Starting background window monitoring service.")
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -320,19 +345,17 @@ func (wm *WindowManager) startMonitoringService(ctx context.Context) {
 func (wm *WindowManager) setupSystemTray(desk desktop.App) {
 	log(true, "Setting up system tray menu for", strProductName+`.`)
 	menu := fyne.NewMenu(strProductName,
-		fyne.NewMenuItem("Show Manager", func() {
+
+		fyne.NewMenuItem(strProductName, func() {
+			log(true, "System tray menu title clicked")
+			//`)
+		}),
+
+		fyne.NewMenuItem("Show Manager", safeCallback(func() {
 			wm.mainWindow.Show()
 			wm.mainWindow.RequestFocus()
 			wm.mainWindow.CenterOnScreen()
-		}),
-		//fyne.NewMenuItemSeparator(),
-		//fyne.NewMenuItem("Auto-position Now", func() {
-		//	wm.repositionSavedWindows()
-		//}),
-		//fyne.NewMenuItemSeparator(),
-		//fyne.NewMenuItem("Quit", func() {
-		//	wm.app.Quit()
-		//}),
+		})),
 	)
 	desk.SetSystemTrayMenu(menu)
 }

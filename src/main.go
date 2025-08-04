@@ -16,17 +16,20 @@ var (
 	// Global variables for publisher, product, and version names
 	strPublisherName = "Lancer"
 	strProductName   = "WindowPositioner"
-	strVersion       = "1.1.0"
+	strVersion       = "1.2.0"
 	strAppId         = "com.lancer.windowpositioner"
 	// cd src
 	// fyne package -os windows
 
 	// Global variable for the main application window manager
 	strAppTitle = strPublisherName + `'s ` + strProductName + ` ` + strVersion
+	wm          *WindowManager
 )
 
 // Main entry point for the application
 func main() {
+
+	defer panicHandler()
 
 	log(true, `Starting`, strAppTitle)
 
@@ -34,7 +37,7 @@ func main() {
 	myApp := app.NewWithID(strAppId)
 
 	// Initialize the window manager
-	wm := NewWindowManager(myApp)
+	wm = NewWindowManager(myApp)
 
 	// Set up system tray if supported
 	if desk, ok := myApp.(desktop.App); ok {
@@ -49,6 +52,7 @@ func main() {
 
 	// Auto-position any saved windows on startup
 	go func() {
+		defer panicHandler()
 		time.Sleep(2 * time.Second) // Give time for other apps to load
 		wm.repositionSavedWindows()
 	}()

@@ -21,6 +21,7 @@ import (
 	Usage:
 
 	log(true, "Some var", "is", var)
+
 */
 
 var strLogFilePath string // eg. <dataFolder>\Dataport\<Product>\log.txt

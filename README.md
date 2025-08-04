@@ -26,6 +26,10 @@ The log file is located at:
 Example:  
 `C:\Users\User\AppData\Local\Lancer\WindowPositioner\log.txt`
 
+## Knwon Bugs
+
+- [ ] WindowPositioner exits after some time (under investigation)
+
 ## Features & Ideas
 
 Already implemented:
@@ -49,6 +53,11 @@ Planned enhancements (time and motivation permitting):
 5. Optionally enable autostart for automatic launching with Windows.
 
 ## Changelog
+
+**1.2.0 - 04.08.2025**
+
+- [x] Changed: Added a mutex for the window manager.
+- [x] Added: App crashes/panics are logged to the app's logfile.
 
 **1.1.0 - 01.08.2025**
 
