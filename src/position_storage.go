@@ -24,7 +24,7 @@ func NewPositionStorage() *PositionStorage {
 	debug := true
 	appData := os.Getenv("APPDATA")
 	if appData == "" {
-		appData := os.Getenv("TEMP")
+		appData = os.Getenv("TEMP")
 		if appData == "" {
 			appData = "."
 		}

@@ -119,21 +119,41 @@ func getWindowInfo(hwnd syscall.Handle) WindowInfo {
 	debug := false
 	log(debug, "Getting window info for handle:", hwnd)
 
+	const maxWinText = 256
+
 	// Get window title
-	titleBuf := make([]uint16, 256)
-	procGetWindowText.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&titleBuf[0])), uintptr(len(titleBuf)))
+	titleBuf := make([]uint16, maxWinText)
+	ret, _, err := procGetWindowText.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&titleBuf[0])), uintptr(len(titleBuf)))
+	if ret == 0 {
+		if errno, ok := err.(syscall.Errno); ok && errno != 0 {
+			log(true, "GetWindowText failed:", errno)
+		}
+		log(true, "GetWindowText failed")
+	}
 	title := syscall.UTF16ToString(titleBuf)
 	log(debug, "Window title:", title)
 
 	// Get class name
-	classBuf := make([]uint16, 256)
-	procGetClassName.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&classBuf[0])), uintptr(len(classBuf)))
+	classBuf := make([]uint16, maxWinText)
+	ret, _, err = procGetClassName.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&classBuf[0])), uintptr(len(classBuf)))
+	if ret == 0 {
+		if errno, ok := err.(syscall.Errno); ok && errno != 0 {
+			log(true, "GetClassName failed:", errno)
+		}
+		log(true, "GetClassName failed")
+	}
 	className := syscall.UTF16ToString(classBuf)
 	log(debug, "Window class name:", className)
 
 	// Get process ID
 	var processID uint32
-	procGetWindowThreadProcessId.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&processID)))
+	ret, _, err = procGetWindowThreadProcessId.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&processID)))
+	if ret == 0 {
+		if errno, ok := err.(syscall.Errno); ok && errno != 0 {
+			log(true, "GetWindowThreadProcessId failed:", errno)
+		}
+		log(true, "GetWindowThreadProcessId failed")
+	}
 	log(debug, "Process ID:", processID)
 
 	// Get process executable path
@@ -151,7 +171,14 @@ func getWindowInfo(hwnd syscall.Handle) WindowInfo {
 
 	// Get window rectangle
 	var windowRect RECT
-	procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&windowRect)))
+	ret, _, err = procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&windowRect)))
+	if ret == 0 {
+		if errno, ok := err.(syscall.Errno); ok && errno != 0 {
+			log(true, "GetWindowRect failed:", errno)
+		}
+		log(true, "GetWindowRect failed")
+	}
+
 	log(debug, "Window rectangle:", windowRect)
 
 	return WindowInfo{
@@ -201,16 +228,20 @@ func MoveWindowAccurate(hwnd syscall.Handle, x, y, width, height int) error {
 	}
 
 	// Use SetWindowPos for precise positioning
-	ret, _, _ := procSetWindowPos.Call(
+	const SWP_SHOWWINDOW = 0x0040 // Show window flag
+	ret, _, err := procSetWindowPos.Call(
 		uintptr(hwnd),
 		0, // HWND_TOP
 		uintptr(x),
 		uintptr(y),
 		uintptr(width),
 		uintptr(height),
-		0x0040, // SWP_SHOWWINDOW
+		SWP_SHOWWINDOW,
 	)
 	if ret == 0 {
+		if errno, ok := err.(syscall.Errno); ok && errno != 0 {
+			return fmt.Errorf("SetWindowPos failed: %v", errno)
+		}
 		return fmt.Errorf("SetWindowPos failed")
 	}
 	log(debug, "Window moved successfully.")
@@ -259,7 +290,7 @@ func getProcessExecutablePath(pid uint32) (string, error) {
 		if ok {
 			return "", fmt.Errorf("GetModuleFileNameExW failed: %v", errno.Error())
 		}
-		return "", fmt.Errorf("GetModuleFileNameExW failed: %v", err)
+		return "", fmt.Errorf("GetModuleFileNameExW failed: %w", err)
 	}
 	path := syscall.UTF16ToString(buf[:ret])
 	log(debug, "Executable path:", path)
@@ -275,7 +306,7 @@ func getWindowLong(hwnd syscall.Handle, index int32) (uintptr, error) {
 		// Try 32-bit fallback for older Windows
 		ret32, _, err32 := procGetWindowLongW.Call(uintptr(hwnd), uintptr(index))
 		if ret32 == 0 {
-			return 0, fmt.Errorf("GetWindowLong failed: %v", err32)
+			return 0, fmt.Errorf("GetWindowLong failed (fallback): %w", err32)
 		}
 		return ret32, nil
 	}
