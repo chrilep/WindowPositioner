@@ -80,9 +80,7 @@ func EnumerateWindows() ([]WindowInfo, error) {
 			info := getWindowInfo(hwnd)
 			width := int(info.WindowRect.Right - info.WindowRect.Left)
 			height := int(info.WindowRect.Bottom - info.WindowRect.Top)
-			if info.Title != "" &&
-				len(info.Title) > 0 &&
-				width > 8 &&
+			if width > 8 &&
 				height > 8 {
 				log(debug, "Found window via handle:", info.Handle)
 				log(debug, "- Title       :", info.Title)
