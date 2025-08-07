@@ -4,5 +4,5 @@ Website = "https://lepthien.info"
   Icon = "icon.png"
   Name = "WindowPositioner"
   ID = "com.lancer.windowpositioner"
-  Version = "1.2.0"
-  Build = 64
+  Version = "1.2.1"
+  Build = 104

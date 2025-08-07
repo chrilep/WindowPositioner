@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 )
 
 /*
@@ -45,6 +46,9 @@ func log(debug bool, arrMessageParts ...any) {
 			return
 		}
 	}
+	// Get current time and format it as HH:mm:ss.fff
+	now := time.Now()
+	timestamp := now.Format("15:04:05.000")
 	strParentName := `main.unknown`
 	// Get the parent function's name
 	ptrCaller, _, _, isSuccess := runtime.Caller(1)
@@ -59,8 +63,8 @@ func log(debug bool, arrMessageParts ...any) {
 	for i, v := range arrMessageParts {
 		arrMessages[i] = fmt.Sprint(v)
 	}
-	fmt.Println(`[`+strParentName+`]`, strings.Join(arrMessages, " "))
-	fmt.Fprintln(fileLog, `[`+strParentName+`]`, strings.Join(arrMessages, " "))
+	fmt.Println(timestamp, `[`+strParentName+`]`, strings.Join(arrMessages, " "))
+	fmt.Fprintln(fileLog, timestamp, `[`+strParentName+`]`, strings.Join(arrMessages, " "))
 }
 
 // Activates the logging module. See function log() for details.

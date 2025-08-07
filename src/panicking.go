@@ -35,16 +35,17 @@ func panicHandler() {
 			log(true, string(debug.Stack()))
 			log(true, "==== END PANIC ====")
 		} else {
-			// Just write to console if log file is not ready
+			// Append to the log file if it is not ready
 			f, err := os.OpenFile(strLogFilePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
-			if err == nil {
-				defer f.Close()
-				fmt.Fprintln(f, "==== PANIC ====")
-				fmt.Fprintln(f, "Time  :", time.Now())
-				fmt.Fprintln(f, "Reason:", r)
-				fmt.Fprintln(f, string(debug.Stack()))
-				fmt.Fprintln(f, "==== END PANIC ====")
+			if err != nil {
+				return
 			}
+			defer f.Close()
+			fmt.Fprintln(f, "==== PANIC ====")
+			fmt.Fprintf(f, "Time  : %s\n", time.Now().Format("2006-01-02 15:04:05"))
+			fmt.Fprintln(f, "Reason:", r)
+			fmt.Fprintln(f, string(debug.Stack()))
+			fmt.Fprintln(f, "==== END PANIC ====")
 		}
 	}
 }

@@ -54,12 +54,15 @@ Planned enhancements (time and motivation permitting):
 
 ## Changelog
 
-**1.2.0 - 04.08.2025**
+**1.2 - 07.08.2025**
 
+- [x] Fix: The app shutdown after some time seemed to be caused by race conditions or by a memory leak.
 - [x] Changed: Added a mutex for the window manager.
 - [x] Added: App crashes/panics are logged to the app's logfile.
+- [x] Added: More logging to find the cause for shutdown after some time.
+- [x] Added: App checks if it is already running. If yes: Show window of first launched app and close the second.
 
-**1.1.0 - 01.08.2025**
+**1.1 - 01.08.2025**
 
 - [x] Changed: Some minor GUI arrangements.
 - [x] Changed: Window centers on screen when opened from tray menu.
@@ -68,7 +71,7 @@ Planned enhancements (time and motivation permitting):
 - [x] Added: Exit button.
 - [x] Added: Open config file button.
 
-**1.0.0 — 31.07.2025**
+**1.0 — 31.07.2025**
 
 - [x] Initial release with core functionality.
 

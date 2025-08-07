@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"sync"
 	"time"
 
@@ -19,30 +20,13 @@ import (
 // WindowManager manages the main application window and the list of windows
 // It provides functionality to enumerate, save, and apply window positions.
 type WindowManager struct {
-	app          fyne.App
-	mainWindow   fyne.Window
-	storage      *PositionStorage
-	windowList   *widget.List
-	windows      []WindowInfo
-	windowsMutex sync.RWMutex // Mutex to protect access to the windows slice
-}
-
-// thrtead-safe set of windows
-// This method replaces the current list of windows with a new one.
-func (wm *WindowManager) setWindows(ws []WindowInfo) {
-	wm.windowsMutex.Lock()
-	defer wm.windowsMutex.Unlock()
-	wm.windows = make([]WindowInfo, len(ws))
-	copy(wm.windows, ws)
-}
-
-// thread-safe get method for the current list of windows
-func (wm *WindowManager) getWindows() []WindowInfo {
-	wm.windowsMutex.RLock()
-	defer wm.windowsMutex.RUnlock()
-	copyWin := make([]WindowInfo, len(wm.windows))
-	copy(copyWin, wm.windows)
-	return copyWin
+	app            fyne.App
+	mainWindow     fyne.Window
+	storage        *PositionStorage
+	windowList     *widget.List
+	windows        []WindowInfo
+	windowsMutex   sync.RWMutex // Mutex to protect access to the windows slice
+	operationMutex sync.Mutex   // Mutex to protect operations that modify the window list
 }
 
 // NewWindowManager initializes the WindowManager with the given application
@@ -56,6 +40,25 @@ func NewWindowManager(app fyne.App) *WindowManager {
 	return wm
 }
 
+// setWindows replaces the current list of windows with a new one.
+// It locks the mutex to ensure thread-safe access to the windows slice.
+func (wm *WindowManager) setWindows(ws []WindowInfo) {
+	wm.windowsMutex.Lock()
+	defer wm.windowsMutex.Unlock()
+	wm.windows = make([]WindowInfo, len(ws))
+	copy(wm.windows, ws)
+}
+
+// getWindows returns a copy of the current list of windows.
+// It locks the mutex to ensure thread-safe access to the windows slice.
+func (wm *WindowManager) getWindows() []WindowInfo {
+	wm.windowsMutex.RLock()
+	defer wm.windowsMutex.RUnlock()
+	copyWin := make([]WindowInfo, len(wm.windows))
+	copy(copyWin, wm.windows)
+	return copyWin
+}
+
 // createMainWindow sets up the main application window
 // It includes a close intercept to hide the window instead of closing it.
 func (wm *WindowManager) createMainWindow() {
@@ -64,6 +67,8 @@ func (wm *WindowManager) createMainWindow() {
 
 	// Hide window instead of closing to keep in system tray
 	wm.mainWindow.SetCloseIntercept(func() {
+		debug := true
+		log(debug, "Main window close intercepted. Hiding instead of closing.")
 		wm.mainWindow.Hide()
 	})
 	wm.setupMainWindowContent()
@@ -72,24 +77,19 @@ func (wm *WindowManager) createMainWindow() {
 // setupMainWindowContent sets up the content of the main window
 func (wm *WindowManager) setupMainWindowContent() {
 	log(true, "Setting up main window content.")
-
 	// Separators
 	separator := widget.NewSeparator()
-
 	// Title label
 	labTitle := widget.NewLabel("Visible Windows")
 	labTitle.TextStyle = fyne.TextStyle{Bold: true}
-
 	// Refresh button
 	refreshBtn := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), safeCallback(func() {
 		wm.refreshWindowList()
 	}))
-
 	// Exit button
 	exitBtn := widget.NewButtonWithIcon("Exit", theme.LogoutIcon(), safeCallback(func() {
 		wm.app.Quit()
 	}))
-
 	// Window list
 	const listItemHeight = 40 // Vertical pixel per scroll item (approx)
 	wm.windowList = widget.NewList(
@@ -98,8 +98,9 @@ func (wm *WindowManager) setupMainWindowContent() {
 		},
 		func() fyne.CanvasObject {
 			return container.NewHBox(
-				widget.NewButtonWithIcon("", theme.DocumentSaveIcon(), nil),
-				widget.NewButtonWithIcon("", theme.InfoIcon(), nil), // Info-Button
+				widget.NewButtonWithIcon("", theme.InfoIcon(), nil),         // Info-Button
+				widget.NewButtonWithIcon("", theme.SearchIcon(), nil),       // Magnify-Button
+				widget.NewButtonWithIcon("", theme.DocumentSaveIcon(), nil), // Save-Button
 				widget.NewLabel("Window Title"),
 			)
 		},
@@ -113,20 +114,21 @@ func (wm *WindowManager) setupMainWindowContent() {
 			}
 			window := windows[id]
 			hbox := obj.(*fyne.Container)
-			saveBtn := hbox.Objects[0].(*widget.Button)
-			infoBtn := hbox.Objects[1].(*widget.Button)
-			label := hbox.Objects[2].(*widget.Label)
+			infoBtn := hbox.Objects[0].(*widget.Button)
+			magnifyIcon := hbox.Objects[1].(*widget.Button)
+			saveBtn := hbox.Objects[2].(*widget.Button)
+			label := hbox.Objects[3].(*widget.Label)
 
-			saveBtn.OnTapped = safeCallback(func() {
-				wm.saveWindowPosition(window)
-			})
+			// Clear existing callbacks to prevent memory leaks
+			infoBtn.OnTapped = nil
+			saveBtn.OnTapped = nil
 
+			// Set new callbacks
 			infoBtn.OnTapped = safeCallback(func() {
 				x := int(window.WindowRect.Left)
 				y := int(window.WindowRect.Top)
 				width := int(window.WindowRect.Right - window.WindowRect.Left)
 				height := int(window.WindowRect.Bottom - window.WindowRect.Top)
-
 				infoText := fmt.Sprintf(
 					"Window    :\n'%s'\n\n"+
 						"Position  : %d,%d\n"+
@@ -146,27 +148,31 @@ func (wm *WindowManager) setupMainWindowContent() {
 					window.ExStyle,
 					window.Executable,
 				)
-
 				entry := widget.NewMultiLineEntry()
 				entry.SetText(infoText)
 				entry.TextStyle = fyne.TextStyle{Monospace: true}
 				entry.Wrapping = fyne.TextWrapBreak
-
 				scroll := container.NewScroll(entry)
 				scroll.SetMinSize(fyne.NewSize(400, 300))
-
 				dialog.ShowCustom("Details for this window", "Close", scroll, wm.mainWindow)
+			})
+			magnifyIcon.OnTapped = safeCallback(func() {
+				err := focusWindow(window.Handle)
+				if err != nil {
+					log(true, "Failed to focus window:", err)
+				}
+			})
+			saveBtn.OnTapped = safeCallback(func() {
+				wm.saveWindowPosition(window)
 			})
 			label.SetText(fmt.Sprintf("%s [%s]", window.Title, window.ClassName))
 		},
 	)
 	scrollWindowList := container.NewScroll(wm.windowList)
 	scrollWindowList.SetMinSize(fyne.NewSize(0, 5*listItemHeight))
-
 	// Saved positions section
 	savedLabel := widget.NewLabel("Saved Positions")
 	savedLabel.TextStyle = fyne.TextStyle{Bold: true}
-
 	configBtn := widget.NewButtonWithIcon("Edit", theme.FileTextIcon(), safeCallback(func() {
 		// Open the configuration file ps.storageFile in the default text editor
 		cmd := exec.Command("cmd", "/C", "start", "", wm.storage.storageFile)
@@ -176,12 +182,10 @@ func (wm *WindowManager) setupMainWindowContent() {
 			dialog.ShowError(err, wm.mainWindow)
 		}
 	}))
-
 	// Create a list for saved positions
 	savedList := wm.createSavedPositionsList()
 	scrollSavedList := container.NewScroll(savedList)
 	scrollSavedList.SetMinSize(fyne.NewSize(0, 5*listItemHeight))
-
 	// Settings section
 	labSettings := widget.NewLabel("Settings")
 	labSettings.TextStyle = fyne.TextStyle{Bold: true}
@@ -196,10 +200,8 @@ func (wm *WindowManager) setupMainWindowContent() {
 			}
 		}
 	})
-
 	// Check current startup status
 	startupCheck.SetChecked(IsStartupEnabled())
-
 	// Layout
 	content := container.NewVBox(
 		container.New(layout.NewGridLayout(4), labTitle, separator, refreshBtn, exitBtn),
@@ -216,7 +218,6 @@ func (wm *WindowManager) setupMainWindowContent() {
 		labSettings,
 		startupCheck,
 	)
-
 	wm.mainWindow.SetContent(content)
 	wm.refreshWindowList()
 }
@@ -261,9 +262,31 @@ func (wm *WindowManager) createSavedPositionsList() *widget.List {
 
 // refreshWindowList fetches the current list of windows and updates the window list widget
 func (wm *WindowManager) refreshWindowList() {
+	debug := true
+	log(debug, "Refreshing window list.")
+	var msStart runtime.MemStats
+	runtime.ReadMemStats(&msStart)
+	log(debug, "-> Memory before refresh:", msStart.Alloc/1024, "KB")
+
+	// Thread-safe operation to avoid concurrent modifications
+	wm.operationMutex.Lock()
+	defer wm.operationMutex.Unlock()
+
+	// Clear existing data first
+	wm.setWindows([]WindowInfo{})
+	wm.windowList.Refresh()
+
+	// Force garbage collection to clean up any unreferenced objects
+	runtime.GC()
+
+	var msClear runtime.MemStats
+	runtime.ReadMemStats(&msClear)
+	diffCleared := int64(msClear.Alloc) - int64(msStart.Alloc)
+	log(debug, "-> Memory after clearing:", msClear.Alloc/1024, "KB, Difference:", diffCleared/1024, "KB")
+
 	windows, err := EnumerateWindows()
 	if err != nil {
-		log(true, "Failed to enumerate windows:", err)
+		log(true, "-> Failed to enumerate windows:", err)
 		return
 	}
 
@@ -277,12 +300,19 @@ func (wm *WindowManager) refreshWindowList() {
 
 	wm.setWindows(filteredWindows)
 	wm.windowList.Refresh()
+
+	var msFinal runtime.MemStats
+	runtime.ReadMemStats(&msFinal)
+
+	diffRefreshed := int64(msFinal.Alloc) - int64(msClear.Alloc)
+
+	log(debug, "-> Memory after refresh:", msFinal.Alloc/1024, "KB, Difference:", diffRefreshed/1024, "KB")
 }
 
 // saveWindowPosition saves the current position of a window identified by its class name and title
 // It retrieves the window position and stores it in the PositionStorage.
 func (wm *WindowManager) saveWindowPosition(window WindowInfo) {
-	pos, err := GetWindowPosition(window.Handle)
+	pos, err := getWindowPosition(window.Handle)
 	if err != nil {
 		log(true, "Failed to get window position:", err)
 		return
@@ -303,40 +333,63 @@ func (wm *WindowManager) saveWindowPosition(window WindowInfo) {
 // This is called on startup and periodically by the monitoring service.
 func (wm *WindowManager) repositionSavedWindows() {
 	debug := false
+	log(debug, "Repositioning saved windows.")
+
+	// Ensure we handle panics gracefully
+	defer panicHandler()
+
+	// Thread-safe operation to avoid concurrent modifications
+	wm.operationMutex.Lock()
+	defer wm.operationMutex.Unlock()
+
+	// Get all saved positions and enumerate current windows
 	positions := wm.storage.GetAllPositions()
 	windows, err := EnumerateWindows()
 	if err != nil {
-		log(true, "Failed to enumerate windows:", err)
+		log(true, "-> Failed to enumerate windows:", err)
 		return
 	}
 
+	log(debug, "-> Found", len(windows), "windows to check for saved positions.")
+
 	for _, window := range windows {
-		identifier := fmt.Sprintf("%s|%s|%s|0x%08X|0x%08X", window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
-		if pos, exists := positions[identifier]; exists {
-			err := MoveWindowAccurate(window.Handle, pos.X, pos.Y, pos.Width, pos.Height)
-			if err != nil {
-				log(true, "Failed to auto-position window:", identifier, err)
-			} else {
-				log(debug, "Auto-positioned:", identifier)
+		func() {
+			defer panicHandler()
+
+			identifier := fmt.Sprintf("%s|%s|%s|0x%08X|0x%08X",
+				window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
+
+			if pos, exists := positions[identifier]; exists {
+				err := MoveWindowAccurate(window.Handle, pos.X, pos.Y, pos.Width, pos.Height)
+				if err != nil {
+					log(true, "Failed to auto-position window:", identifier, err)
+				} else {
+					log(debug, "Auto-positioned:", identifier)
+				}
 			}
-		}
+		}()
 	}
 }
 
 // startMonitoringService runs a background service that periodically checks for window positions
 // and repositions them if necessary. This is useful for keeping windows in their saved positions.
 func (wm *WindowManager) startMonitoringService(ctx context.Context) {
+	debug := true
+	log(debug, "Starting background window monitoring service.")
 	defer panicHandler()
-	log(true, "Starting background window monitoring service.")
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			log(debug, "Monitoring service stopped")
 			return
 		case <-ticker.C:
-			wm.repositionSavedWindows()
+			func() {
+				defer panicHandler()
+				wm.repositionSavedWindows()
+			}()
 		}
 	}
 }
