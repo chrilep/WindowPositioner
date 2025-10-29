@@ -1,6 +1,6 @@
 # WindowPositioner
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/chrilep/WindowPositioner)](https://golang.org)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/chrilep/WindowPositioner?filename=src/go.mod)](https://golang.org)
 [![License](https://img.shields.io/github/license/chrilep/WindowPositioner)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/chrilep/WindowPositioner)](../../releases)
 [![Issues](https://img.shields.io/github/issues/chrilep/WindowPositioner)](../../issues)
