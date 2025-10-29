@@ -1,10 +1,10 @@
 # WindowPositioner
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/chrilep/LaunchRDP)](https://golang.org)
-[![License](https://img.shields.io/github/license/chrilep/LaunchRDP)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/chrilep/LaunchRDP)](../../releases)
-[![Issues](https://img.shields.io/github/issues/chrilep/LaunchRDP)](../../issues)
-[![Stars](https://img.shields.io/github/stars/chrilep/LaunchRDP?style=social)](../../stargazers)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/chrilep/WindowPositioner)](https://golang.org)
+[![License](https://img.shields.io/github/license/chrilep/WindowPositioner)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/chrilep/WindowPositioner)](../../releases)
+[![Issues](https://img.shields.io/github/issues/chrilep/WindowPositioner)](../../issues)
+[![Stars](https://img.shields.io/github/stars/chrilep/WindowPositioner?style=social)](../../stargazers)
 
 **Never move your windows manually again!**  
 WindowPositioner lets you save and restore window positions automatically, optimizing your workflow.
