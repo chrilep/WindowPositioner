@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
@@ -21,7 +22,7 @@ var (
 	// Global variables for publisher, product, and version names
 	strPublisherName = "Lancer"
 	strProductName   = "WindowPositioner"
-	strVersion       = "1.2.1"
+	strVersion       = "1.3.1"
 	strAppId         = "com.lancer.windowpositioner"
 	// cd src
 	// fyne package -os windows
@@ -38,13 +39,26 @@ func main() {
 
 	debug := true
 	log(true, `Starting`, strAppTitle)
+	log(true, "HEARTBEAT: Application startup initiated at", time.Now().Format("2006-01-02 15:04:05"))
+
+	// Create context for coordinated shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Install a handler for SIGINT/SIGTERM signals to log when the application receives these signals
 	chanSignal := make(chan os.Signal, 1)
 	signal.Notify(chanSignal, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
+		defer panicHandler()
 		for sig := range chanSignal {
 			log(true, "Signal received:", sig)
+			if sig == syscall.SIGINT || sig == syscall.SIGTERM {
+				log(true, "HEARTBEAT: Graceful shutdown requested via signal", sig)
+				cancel() // Cancel the context to stop other goroutines
+				if wm != nil && wm.app != nil {
+					wm.app.Quit()
+				}
+			}
 		}
 	}()
 
@@ -58,10 +72,6 @@ func main() {
 	if desk, ok := myApp.(desktop.App); ok {
 		wm.setupSystemTray(desk)
 	}
-
-	// Start the background window monitoring service
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	go wm.startMonitoringService(ctx)
 
@@ -100,6 +110,50 @@ func main() {
 		}
 	}()
 
+	// Heartbeat logging to track application lifetime
+	go func() {
+		defer panicHandler()
+		heartbeatTicker := time.NewTicker(5 * time.Minute) // Log every 5 minutes
+		defer heartbeatTicker.Stop()
+
+		startTime := time.Now()
+		heartbeatCounter := 0
+
+		for {
+			select {
+			case <-ctx.Done():
+				log(true, "HEARTBEAT: Application shutdown requested after", time.Since(startTime).Round(time.Second))
+				return
+			case <-heartbeatTicker.C:
+				heartbeatCounter++
+				uptime := time.Since(startTime).Round(time.Second)
+
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+
+				// Get current goroutine count
+				goroutines := runtime.NumGoroutine()
+
+				// Get current window count if available
+				windowCount := 0
+				if wm != nil {
+					windows := wm.getWindows()
+					windowCount = len(windows)
+				}
+
+				log(true, fmt.Sprintf("HEARTBEAT #%d: Uptime=%v, Memory=%dKB, Goroutines=%d, Windows=%d",
+					heartbeatCounter, uptime, m.Alloc/1024, goroutines, windowCount))
+
+				// Log additional info every 30 minutes (every 6th heartbeat)
+				if heartbeatCounter%6 == 0 {
+					log(true, fmt.Sprintf("HEARTBEAT EXTENDED: TotalAlloc=%dKB, Sys=%dKB, NumGC=%d, HeapObjects=%d",
+						m.TotalAlloc/1024, m.Sys/1024, m.NumGC, m.HeapObjects))
+				}
+			}
+		}
+	}()
+
 	myApp.Run()
 	log(debug, "Exiting event loop. App closes now.")
+	log(true, "HEARTBEAT: Application shutdown completed at", time.Now().Format("2006-01-02 15:04:05"))
 }

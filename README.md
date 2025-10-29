@@ -54,6 +54,10 @@ Planned enhancements (time and motivation permitting):
 
 ## Changelog
 
+**1.3 - 29.10.2025**
+
+- [x] Fix: App still closed itself silently. Added more error-handling and -logging + heartbeat
+
 **1.2 - 07.08.2025**
 
 - [x] Fix: The app shutdown after some time seemed to be caused by race conditions or by a memory leak.

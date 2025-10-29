@@ -157,12 +157,25 @@ func (wm *WindowManager) setupMainWindowContent() {
 				dialog.ShowCustom("Details for this window", "Close", scroll, wm.mainWindow)
 			})
 			magnifyIcon.OnTapped = safeCallback(func() {
+				// Validate window handle before attempting to focus
+				if !isValidWindow(window.Handle) {
+					log(true, "Cannot focus window - handle is invalid:", window.Handle)
+					dialog.ShowError(fmt.Errorf("window no longer exists: %s", window.Title), wm.mainWindow)
+					return
+				}
 				err := focusWindow(window.Handle)
 				if err != nil {
 					log(true, "Failed to focus window:", err)
+					dialog.ShowError(fmt.Errorf("failed to focus window: %v", err), wm.mainWindow)
 				}
 			})
 			saveBtn.OnTapped = safeCallback(func() {
+				// Validate window handle before attempting to save position
+				if !isValidWindow(window.Handle) {
+					log(true, "Cannot save position - window handle is invalid:", window.Handle)
+					dialog.ShowError(fmt.Errorf("window no longer exists: %s", window.Title), wm.mainWindow)
+					return
+				}
 				wm.saveWindowPosition(window)
 			})
 			label.SetText(fmt.Sprintf("%s [%s]", window.Title, window.ClassName))
@@ -352,22 +365,50 @@ func (wm *WindowManager) repositionSavedWindows() {
 
 	log(debug, "-> Found", len(windows), "windows to check for saved positions.")
 
+	errorCount := 0
+	maxErrors := 10 // Stop processing if too many errors occur
+
 	for _, window := range windows {
 		func() {
-			defer panicHandler()
+			defer func() {
+				if r := recover(); r != nil {
+					errorCount++
+					log(true, "Panic in repositionSavedWindows for window", window.Handle, ":", r)
+					if errorCount >= maxErrors {
+						log(true, "Too many errors in repositionSavedWindows, stopping processing for this cycle")
+						return
+					}
+				}
+			}()
+
+			// Skip processing if too many errors have occurred
+			if errorCount >= maxErrors {
+				return
+			}
 
 			identifier := fmt.Sprintf("%s|%s|%s|0x%08X|0x%08X",
 				window.Title, window.ClassName, window.Executable, window.Style, window.ExStyle)
 
 			if pos, exists := positions[identifier]; exists {
+				// Additional validation before attempting to move
+				if !isValidWindow(window.Handle) {
+					log(debug, "Skipping invalid window handle:", identifier)
+					return
+				}
+
 				err := MoveWindowAccurate(window.Handle, pos.X, pos.Y, pos.Width, pos.Height)
 				if err != nil {
-					log(true, "Failed to auto-position window:", identifier, err)
+					errorCount++
+					log(debug, "Failed to auto-position window:", identifier, err) // Changed to debug to reduce log spam
 				} else {
 					log(debug, "Auto-positioned:", identifier)
 				}
 			}
 		}()
+	}
+
+	if errorCount > 0 {
+		log(true, "repositionSavedWindows completed with", errorCount, "errors")
 	}
 }
 
@@ -377,7 +418,8 @@ func (wm *WindowManager) startMonitoringService(ctx context.Context) {
 	debug := true
 	log(debug, "Starting background window monitoring service.")
 	defer panicHandler()
-	ticker := time.NewTicker(5 * time.Second)
+	// Increase interval to reduce likelihood of hitting destroyed windows
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -387,7 +429,19 @@ func (wm *WindowManager) startMonitoringService(ctx context.Context) {
 			return
 		case <-ticker.C:
 			func() {
-				defer panicHandler()
+				defer func() {
+					if r := recover(); r != nil {
+						log(true, "Panic in monitoring service:", r)
+						// Continue running the service despite the panic
+					}
+				}()
+
+				// Add additional safeguards
+				if wm == nil || wm.storage == nil {
+					log(true, "WindowManager or storage is nil, skipping monitoring cycle")
+					return
+				}
+
 				wm.repositionSavedWindows()
 			}()
 		}

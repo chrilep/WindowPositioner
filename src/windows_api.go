@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -171,6 +172,58 @@ const (
 	WM_SYSCOMMAND                     = 0x0112           // System command message
 )
 
+// Global callback for window enumeration to prevent memory leaks
+var globalEnumCallback uintptr
+
+// Shared windows slice for callback communication
+var enumeratedWindows []WindowInfo
+var enumMutex sync.Mutex
+
+// init function to create the callback once
+func init() {
+	globalEnumCallback = syscall.NewCallback(enumWindowsCallbackFunc)
+}
+
+// enumWindowsCallbackFunc is the callback function for EnumWindows
+func enumWindowsCallbackFunc(hwnd syscall.Handle, lparam uintptr) uintptr {
+	debug := false // Get debug flag from context or use false as default
+
+	// Add error recovery for individual window processing
+	defer func() {
+		if r := recover(); r != nil {
+			log(true, "Panic in window enumeration callback for handle", hwnd, ":", r)
+			// Continue enumeration despite the error
+		}
+	}()
+
+	// Double-check window validity before processing
+	if hwnd == 0 || !isValidWindow(hwnd) {
+		return 1 // Continue enumeration
+	}
+
+	if isWindowVisible(hwnd) {
+		info := getWindowInfo(hwnd)
+		width := int(info.WindowRect.Right - info.WindowRect.Left)
+		height := int(info.WindowRect.Bottom - info.WindowRect.Top)
+		if width > 8 && height > 8 {
+			log(debug, "Found window via handle:", info.Handle)
+			log(debug, "- Title       :", info.Title)
+			log(debug, "- ClassName   :", info.ClassName)
+			log(debug, "- Executable  :", info.Executable)
+			log(debug, "- Style       :", info.Style)
+			log(debug, "- ExStyle     :", info.ExStyle)
+			log(debug, "- ClientRect  :", info.ClientRect)
+			log(debug, "- WindowRect  :", info.WindowRect)
+
+			// Thread-safe append to shared slice
+			enumMutex.Lock()
+			enumeratedWindows = append(enumeratedWindows, info)
+			enumMutex.Unlock()
+		}
+	}
+	return 1 // Continue enumeration
+}
+
 // EnumerateWindows retrieves a list of all visible windows on the desktop.
 // It returns a slice of WindowInfo structs containing the handle, title, class name, and process ID of each window.
 // It uses the EnumWindows function to enumerate all top-level windows.
@@ -179,37 +232,25 @@ const (
 func EnumerateWindows() ([]WindowInfo, error) {
 	debug := false
 	log(debug, "Enumerating visible windows.")
-	var windows []WindowInfo
 
-	callback := syscall.NewCallback(func(hwnd syscall.Handle, lparam uintptr) uintptr {
-		if isWindowVisible(hwnd) {
-			info := getWindowInfo(hwnd)
-			width := int(info.WindowRect.Right - info.WindowRect.Left)
-			height := int(info.WindowRect.Bottom - info.WindowRect.Top)
-			if width > 8 &&
-				height > 8 {
-				log(debug, "Found window via handle:", info.Handle)
-				log(debug, "- Title       :", info.Title)
-				log(debug, "- ClassName   :", info.ClassName)
-				log(debug, "- Executable  :", info.Executable)
-				log(debug, "- Style       :", info.Style)
-				log(debug, "- ExStyle     :", info.ExStyle)
-				log(debug, "- ClientRect  :", info.ClientRect)
-				log(debug, "- WindowRect  :", info.WindowRect)
+	// Reset the shared windows slice
+	enumMutex.Lock()
+	enumeratedWindows = enumeratedWindows[:0] // Clear slice but keep capacity
+	enumMutex.Unlock()
 
-				windows = append(windows, info)
-			}
-		}
-		return 1 // Continue enumeration
-	})
-
-	ret, _, err := procEnumWindows.Call(uintptr(callback), 0)
+	ret, _, err := procEnumWindows.Call(globalEnumCallback, 0)
 	if ret == 0 {
 		log(true, "EnumWindows failed:", err)
 		return nil, fmt.Errorf("EnumWindows failed: %v", err)
 	}
 
-	return windows, nil
+	// Return a copy of the enumerated windows
+	enumMutex.Lock()
+	result := make([]WindowInfo, len(enumeratedWindows))
+	copy(result, enumeratedWindows)
+	enumMutex.Unlock()
+
+	return result, nil
 }
 
 // isWindowVisible checks if a window is visible.
@@ -228,52 +269,95 @@ func getWindowInfo(hwnd syscall.Handle) WindowInfo {
 	debug := false
 	log(debug, "Getting window info for handle:", hwnd)
 
+	// Add comprehensive error recovery for this function
+	defer func() {
+		if r := recover(); r != nil {
+			log(true, "Panic in getWindowInfo for handle", hwnd, ":", r)
+		}
+	}()
+
+	// Validate the handle at the start
+	if hwnd == 0 {
+		log(debug, "Invalid window handle: 0")
+		return WindowInfo{Handle: hwnd}
+	}
+
 	const maxWinText = 256
 
-	// Get window title
-	titleBuf := make([]uint16, maxWinText)
-	ret, _, err := procGetWindowText.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&titleBuf[0])), uintptr(len(titleBuf)))
-	if ret == 0 {
-		log(debug, "GetWindowText failed:", err) // debug since it is common to fail
-	}
-	title := syscall.UTF16ToString(titleBuf)
-	log(debug, "Window title:", title)
-
-	// Get class name
-	classBuf := make([]uint16, maxWinText)
-	ret, _, err = procGetClassName.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&classBuf[0])), uintptr(len(classBuf)))
-	if ret == 0 {
-		log(true, "GetClassName failed:", err)
-	}
-	className := syscall.UTF16ToString(classBuf)
-	log(debug, "Window class name:", className)
-
-	// Get process ID
+	// Initialize with safe defaults
+	var title, className string
 	var processID uint32
-	ret, _, err = procGetWindowThreadProcessId.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&processID)))
-	if ret == 0 {
-		log(true, "GetWindowThreadProcessId failed:", err)
-	}
-	log(debug, "Process ID:", processID)
 
-	// Get process executable path
-	exePath, _ := getProcessExecutablePath(processID)
+	// Only proceed with API calls if the window appears to be valid
+	if isValidWindow(hwnd) {
+		// Get window title
+		titleBuf := make([]uint16, maxWinText)
+		ret, _, err := procGetWindowText.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&titleBuf[0])), uintptr(len(titleBuf)))
+		if ret == 0 {
+			log(debug, "GetWindowText failed:", err) // debug since it is common to fail
+		} else {
+			title = syscall.UTF16ToString(titleBuf)
+		}
+		log(debug, "Window title:", title)
+
+		// Get class name
+		classBuf := make([]uint16, maxWinText)
+		ret, _, err = procGetClassName.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&classBuf[0])), uintptr(len(classBuf)))
+		if ret == 0 {
+			log(debug, "GetClassName failed:", err)
+		} else {
+			className = syscall.UTF16ToString(classBuf)
+		}
+		log(debug, "Window class name:", className)
+
+		// Get process ID
+		ret, _, err = procGetWindowThreadProcessId.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&processID)))
+		if ret == 0 {
+			log(debug, "GetWindowThreadProcessId failed:", err)
+		}
+		log(debug, "Process ID:", processID)
+	} else {
+		log(debug, "Skipping API calls for invalid window handle:", hwnd)
+	}
+
+	// Get process executable path - handle errors gracefully
+	var exePath string
+	if processID != 0 {
+		path, err := getProcessExecutablePath(processID)
+		if err != nil {
+			log(debug, "Failed to get executable path for PID", processID, ":", err)
+			exePath = fmt.Sprintf("PID:%d", processID) // Use PID as fallback
+		} else {
+			exePath = path
+		}
+	}
 	log(debug, "Process executable path:", exePath)
 
-	// Get window styles and extended styles
-	style, _ := getWindowLong(hwnd, GWL_STYLE)
-	exstyle, _ := getWindowLong(hwnd, GWL_EXSTYLE)
+	// Get window styles and extended styles - only if window is still valid
+	var style, exstyle uintptr
+	if isValidWindow(hwnd) {
+		style, _ = getWindowLong(hwnd, GWL_STYLE)
+		exstyle, _ = getWindowLong(hwnd, GWL_EXSTYLE)
+	}
 	log(debug, "Window styles:", style, "Extended styles:", exstyle)
 
-	// Get client rectangle
-	clientRect, _ := getClientRect(hwnd)
+	// Get client rectangle - only if window is still valid
+	var clientRect *RECT
+	if isValidWindow(hwnd) {
+		clientRect, _ = getClientRect(hwnd)
+	}
+	if clientRect == nil {
+		clientRect = &RECT{} // Use empty rectangle if failed
+	}
 	log(debug, "Client rectangle:", clientRect)
 
 	// Get window rectangle
 	var windowRect RECT
-	ret, _, err = procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&windowRect)))
-	if ret == 0 {
-		log(true, "GetWindowRect failed:", err)
+	if isValidWindow(hwnd) {
+		ret, _, err := procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&windowRect)))
+		if ret == 0 {
+			log(true, "GetWindowRect failed:", err)
+		}
 	}
 
 	log(debug, "Window rectangle:", windowRect)
@@ -291,11 +375,38 @@ func getWindowInfo(hwnd syscall.Handle) WindowInfo {
 	}
 }
 
+// isValidWindow checks if a window handle is still valid
+func isValidWindow(hwnd syscall.Handle) bool {
+	if hwnd == 0 {
+		return false
+	}
+
+	// Use a safer approach: check if window is visible first (faster and safer)
+	// If this fails, the window is definitely invalid
+	ret1, _, _ := procIsWindowVisible.Call(uintptr(hwnd))
+	if ret1 == 0 {
+		// Window is not visible, but that doesn't mean it's invalid
+		// Let's do a secondary check with GetWindowRect
+		var rect RECT
+		ret2, _, _ := procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&rect)))
+		return ret2 != 0
+	}
+
+	// Window is visible, so it's valid
+	return true
+}
+
 // getWindowPosition retrieves the position and size of a window.
 // It uses GetWindowRect to get the window's bounding rectangle.
 func getWindowPosition(hwnd syscall.Handle) (*WindowPosition, error) {
 	debug := false
 	log(debug, "Getting window position for handle:", hwnd)
+
+	// Validate handle first
+	if !isValidWindow(hwnd) {
+		return nil, fmt.Errorf("invalid or destroyed window handle: %v", hwnd)
+	}
+
 	var rect RECT
 	ret, _, err := procGetWindowRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&rect)))
 	if ret == 0 {
@@ -316,6 +427,11 @@ func getWindowPosition(hwnd syscall.Handle) (*WindowPosition, error) {
 func MoveWindowAccurate(hwnd syscall.Handle, x, y, width, height int) error {
 	debug := false
 	log(debug, "Moving window:", hwnd, "to position:", x, y, "with size:", width, height)
+
+	// Validate handle first
+	if !isValidWindow(hwnd) {
+		return fmt.Errorf("invalid or destroyed window handle: %v", hwnd)
+	}
 
 	// Get current position and size
 	pos, err := getWindowPosition(hwnd)
@@ -560,14 +676,24 @@ func tryCombinedApproach(hwnd syscall.Handle, x, y, width, height int) bool {
 // openProcess opens a handle to a process by its PID.
 // It uses OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION access.
 func openProcess(pid uint32) (syscall.Handle, error) {
+	// Add validation for PID
+	if pid == 0 {
+		return 0, fmt.Errorf("invalid PID: 0")
+	}
+
 	h, _, err := procOpenProcess.Call(uintptr(PROCESS_QUERY_LIMITED_INFORMATION), uintptr(0), uintptr(pid))
 	if h == 0 {
 		if errno, ok := err.(syscall.Errno); ok && errno != 0 {
-			log(true, "OpenProcess failed:", errno)
-			return 0, fmt.Errorf("OpenProcess failed: %v", errno)
+			// Don't log "Access is denied" errors as critical - they're common for system/protected processes
+			if errno == 5 { // ERROR_ACCESS_DENIED
+				log(false, "OpenProcess access denied for PID", pid, "- this is normal for protected processes")
+				return 0, fmt.Errorf("OpenProcess access denied for PID %d", pid)
+			}
+			log(true, "OpenProcess failed for PID", pid, ":", errno)
+			return 0, fmt.Errorf("OpenProcess failed for PID %d: %v", pid, errno)
 		}
-		log(true, "OpenProcess failed")
-		return 0, err
+		log(true, "OpenProcess failed for PID", pid)
+		return 0, fmt.Errorf("OpenProcess failed for PID %d", pid)
 	}
 	return syscall.Handle(h), nil
 }
@@ -595,9 +721,22 @@ func getProcessExecutablePath(pid uint32) (string, error) {
 	debug := false
 	log(debug, "Getting executable path for PID:", pid)
 
+	// Validate PID
+	if pid == 0 {
+		return "", fmt.Errorf("invalid PID: 0")
+	}
+
+	// Add panic recovery for this function
+	defer func() {
+		if r := recover(); r != nil {
+			log(true, "Panic in getProcessExecutablePath for PID", pid, ":", r)
+		}
+	}()
+
 	handle, err := openProcess(pid)
 	if err != nil || handle == 0 {
-		return "", fmt.Errorf("OpenProcess failed: %v", err)
+		// Return a more descriptive error for the caller to handle gracefully
+		return "", fmt.Errorf("OpenProcess failed for PID %d: %v", pid, err)
 	}
 	defer closeHandle(handle)
 	log(debug, "Opened process handle:", handle)
@@ -624,6 +763,12 @@ func getProcessExecutablePath(pid uint32) (string, error) {
 // getWindowLong retrieves a specified value associated with a window.
 func getWindowLong(hwnd syscall.Handle, index int32) (uintptr, error) {
 	debug := true
+
+	// Validate handle first to prevent crashes
+	if hwnd == 0 {
+		return 0, fmt.Errorf("invalid window handle: 0")
+	}
+
 	ret, _, err := procGetWindowLongPtrW.Call(uintptr(hwnd), uintptr(index))
 	if ret != 0 {
 		return ret, nil
@@ -648,6 +793,11 @@ func getWindowLong(hwnd syscall.Handle, index int32) (uintptr, error) {
 // getClientRect retrieves the client area rectangle of a window.
 // It uses GetClientRect to get the rectangle in client coordinates.
 func getClientRect(hwnd syscall.Handle) (*RECT, error) {
+	// Validate handle first
+	if hwnd == 0 {
+		return nil, fmt.Errorf("invalid window handle: 0")
+	}
+
 	var rect RECT
 	ret, _, err := procGetClientRect.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&rect)))
 	if ret == 0 {
@@ -666,6 +816,11 @@ func getClientRect(hwnd syscall.Handle) (*RECT, error) {
 func focusWindow(hwnd syscall.Handle) error {
 	debug := true
 	log(debug, "Attempting to focus window with handle:", hwnd)
+
+	// Validate handle first
+	if !isValidWindow(hwnd) {
+		return fmt.Errorf("invalid or destroyed window handle: %v", hwnd)
+	}
 
 	// Get virtual screen bounds
 	virtualScreen := getVirtualScreenRect()
